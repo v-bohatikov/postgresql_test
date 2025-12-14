@@ -1,0 +1,151 @@
+networks:
+  pg-network:
+
+services:
+
+  # Custom PostgeSQL build
+  persona-pg-18-ex:
+    build:
+      context: ./persona-pg-18-ex
+      dockerfile: persona-pg-18-ex.Dockerfile
+    image: persona-pg-18-ex
+
+  # Primary PostgeSQL instance
+  pg-primary:
+    container_name: pg-primary
+    image: persona-pg-18-ex
+    restart: always
+    environment:
+      POSTGRES_USER: "admin1"
+      POSTGRES_PASSWORD: "admin1"
+      POSTGRES_DB: "db"
+    volumes:
+      - pg-primary-data:/var/lib/postgresql/data 
+      - ./pg-primary/config:/config/
+      - ./pg-primary/archive:/mnt/server/archive
+    ports:
+      - 5000:5432
+    networks:
+      - pg-network
+    # Force PostgreSQL instance to use our own configuration file
+    #command: "postgres -c config_file=/config/postgresql.conf"
+    command: ["tail", "-f", "/dev/null"] 
+
+  # Standby PostgeSQL instance
+  pg-standby:
+    container_name: pg-standby
+    image: persona-pg-18-ex
+    restart: always
+    environment:
+      POSTGRES_USER: "admin2"
+      POSTGRES_PASSWORD: "admin2"
+      POSTGRES_DB: "db"
+    volumes:
+      - pg-standby-data:/var/lib/postgresql/data
+      - ./pg-standby/config:/config/
+      - ./pg-standby/archive:/mnt/server/archive
+    ports:
+      - 5001:5432
+    depends_on:
+      - pg-primary
+    networks:
+      - pg-network
+    command: >
+      bash -c "
+      # Wait for primary to initialize
+      sleep 5;
+
+      # Use the 'replicator' user for base backup/replication
+      pg_basebackup -h pg-primary -U replicator -D /var/lib/postgresql/data -P -R -S rep_slot_standby;
+
+      # Force PostgreSQL instance to use our own configuration file
+      exec postgres -c config_file=/config/postgresql.conf
+      "
+
+  # pgAdmin for managment of PostgeSQL instances
+  pgAdmin:
+    container_name: pgAdmin
+    image: dpage/pgadmin4:9
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@test.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8181:80"
+    volumes:
+      # Map the config file with proconfigured instances
+      - ./pgAdmin/config/servers.json:/pgadmin4/servers.json
+      # Persistent storage for pgAdmin config/sessions
+      - ./pgAdmin/data:/var/lib/pgadmin 
+    depends_on:
+      - pg-primary
+      - pg-standby
+    networks:
+      - pg-network
+  
+  # PMM configuration for PostgeSQL instances
+  pmm-server:
+    container_name: pmm-server
+    image: percona/pmm-server:3
+    restart: always
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - ./pmm/data:/srv
+    networks:
+      - pg-network
+
+  pmm-client:
+    container_name: pmm-client
+    image: percona/pmm-client:3
+    restart: always
+    environment:
+      PMM_AGENT_SERVER_ADDRESS: pmm-server
+      # Dafault username of pmm-server
+      PMM_AGENT_SERVER_USERNAME: admin
+      # Dafault password of pmm-server
+      # NOTE: Don't change this password on first login!!!
+      PMM_AGENT_SERVER_PASSWORD: admin
+      # Use insecure TLS for simplicity in docker environment
+      PMM_AGENT_SERVER_INSECURE_TLS: 1
+      # The trigger that makes the client use these settings on startup
+      PMM_AGENT_SETUP: 1
+    depends_on:
+      - pmm-server
+      - pg-primary
+      - pg-standby
+    networks:
+      - pg-network
+    command: >
+      bash -c "
+      # Wait for PMM server to be available
+      sleep 10;
+      
+      # The client node is automatically configured using PMM_AGENT_* environment variables and PMM_AGENT_SETUP=1
+
+      # Register primary PostgeSQL instance
+      # NOTE: Username and paasword being taken from 'startup.sql' file which
+      # is part of our own custom build for PostgreSQL
+      pmm-admin add postgresql \
+        --host=pg-primary \
+        --username=pmm \
+        --password=pmm_password \
+        --service-name=pg-primary-service;
+
+      # Register standby PostgeSQL instance
+      # NOTE: Username and paasword being taken from 'startup.sql' file which
+      # is part of our own custom build for PostgreSQL
+      pmm-admin add postgresql \
+        --host=pg-standby \
+        --username=pmm \
+        --password=pmm_password \
+        --service-name=pg-standby-service;
+
+      # Keep the container running in the foreground, specifically for Docker so it doesn't stop the client
+      tail -f /dev/null
+      "
+
+volumes:
+  pg-primary-data:
+  pg-standby-data:

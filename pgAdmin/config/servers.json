@@ -1,0 +1,22 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Primary PostgreSQL instance",
+      "Group": "Servers",
+      "Port": 5000,
+      "Host": "pg_1",
+      "SSLMode": "prefer",
+      "MaintenanceDB": "db",
+      "Username": "admin1"
+    },
+    "2": {
+      "Name": "Standby PostgreSQL instance",
+      "Group": "Servers",
+      "Port": 5001,
+      "Host": "pg_2",
+      "SSLMode": "prefer",
+      "MaintenanceDB": "db",
+      "Username": "admin2"
+    }
+  }
+}
