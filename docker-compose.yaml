@@ -44,9 +44,6 @@ services:
     image: persona-pg-18-ex
     restart: always
     environment:
-      POSTGRES_USER: "admin2"
-      POSTGRES_PASSWORD: "admin2"
-      POSTGRES_DB: "db"
       PGDATA: /var/lib/postgresql/18/docker
       # Required for 'pg_basebackup' command to run without promting imput of a password
       PGPASSWORD: "replicator_password"
@@ -64,7 +61,7 @@ services:
     networks:
       - pg-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin2 -d db"]
+      test: ["CMD-SHELL", "pg_isready -U admin1 -d db"]
       interval: 10s
       timeout: 3s
       retries: 10
@@ -74,19 +71,20 @@ services:
       set -e
 
       # Use a wait loop until the primary is truly ready for replication
-      while ! pg_isready -h pg-primary -U replicator -d postgres; do
+      while ! pg_isready -h pg-primary -U replicator -d db; do
         echo "Waiting for primary DB..."
         sleep 2
       done
 
       # Intiate one-time backup to make the instance replication ready
-      if [ ! -s /var/lib/postgresql/18/docker ]; then
+      if [ -z "$(ls -A /var/lib/postgresql/18/docker 2>/dev/null)" ]; then
         pg_basebackup \
           -h pg-primary \
           -U replicator \
           -D /var/lib/postgresql/18/docker \
           -P \
           -R \
+          -C \
           -S rep_slot_standby
       fi
 
@@ -134,8 +132,9 @@ services:
     networks:
       - pg-network
     healthcheck:
-      # Check if the UI is responsive on port 8080 (internal container port)
-      test: ["CMD", "curl", "-f", "http://localhost:8080/graph/ping"]
+      # Checking whether '/v1/version' is served by the PMM API
+      # It only becomes available after the server is fully initialized
+      test: ["CMD", "curl", "-k", "https://pmm-server:8443/v1/version"]
       interval: 10s
       timeout: 3s
       retries: 10
@@ -145,17 +144,6 @@ services:
     container_name: pmm-client
     image: percona/pmm-client:3
     restart: always
-    environment:
-      PMM_AGENT_SERVER_ADDRESS: pmm-server
-      # Dafault username of pmm-server
-      PMM_AGENT_SERVER_USERNAME: admin
-      # Dafault password of pmm-server
-      # NOTE: Don't change this password on first login!!!
-      PMM_AGENT_SERVER_PASSWORD: admin
-      # Use insecure TLS for simplicity in docker environment
-      PMM_AGENT_SERVER_INSECURE_TLS: 1
-      # The trigger that makes the client use these settings on startup
-      PMM_AGENT_SETUP: 1
     depends_on:
       pmm-server:
         condition: service_healthy
@@ -165,33 +153,46 @@ services:
         condition: service_healthy
     networks:
       - pg-network
-    command: >
-      bash -c "
-      # The client node is automatically configured using PMM_AGENT_* environment variables and PMM_AGENT_SETUP=1
+    entrypoint:
+      - /bin/bash
+      - -c
+    command:
+      - |
+        set -e
 
-      # Register primary PostgeSQL instance
-      # NOTE: Username and paasword being taken from 'startup.sql' file which
-      # is part of our own custom build for PostgreSQL
-      pmm-admin add postgresql \
-        --host=pg-primary \
-        --username=pmm \
-        --password=pmm_password \
-        --service-name=pg-primary-service \
-        || echo "Primary service already registered"
+        # Replaces the automatic configuration from 'pmm-agent-entrypoint', that we have overwritten
+        CONFIG=/usr/local/percona/pmm/config/pmm-agent.yaml
+        pmm-agent setup \
+          --server-address=pmm-server:8443 \
+          --server-insecure-tls \
+          --server-username=admin \
+          --server-password=admin \
+          --node-name=pmm-client \
+          --config-file="$$CONFIG"
+        pmm-agent --config-file="$$CONFIG"
 
-      # Register standby PostgeSQL instance
-      # NOTE: Username and paasword being taken from 'startup.sql' file which
-      # is part of our own custom build for PostgreSQL
-      pmm-admin add postgresql \
-        --host=pg-standby \
-        --username=pmm \
-        --password=pmm_password \
-        --service-name=pg-standby-service \
-        || echo "Primary service already registered"
+        # Register primary PostgeSQL instance
+        # NOTE: Username and paasword being taken from 'startup.sql' file which
+        # is part of our own custom build for PostgreSQL
+        pmm-admin add postgresql \
+          --host=pg-primary \
+          --username=pmm \
+          --password=pmm_password \
+          --service-name=pg-primary-service \
+          || echo "Primary service already registered"
 
-      # Keep the container running in the foreground, specifically for Docker so it whouldn't stop the client
-      tail -f /dev/null
-      "
+        # Register standby PostgeSQL instance
+        # NOTE: Username and paasword being taken from 'startup.sql' file which
+        # is part of our own custom build for PostgreSQL
+        pmm-admin add postgresql \
+          --host=pg-standby \
+          --username=pmm \
+          --password=pmm_password \
+          --service-name=pg-standby-service \
+          || echo "Primary service already registered"
+
+        # Keep the container running in the foreground, specifically for Docker so it whouldn't stop the client
+        tail -f /dev/null
 
 volumes:
   pg-primary-data:
