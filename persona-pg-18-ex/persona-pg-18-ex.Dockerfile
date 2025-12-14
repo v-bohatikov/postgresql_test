@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
     lsb-release \
+    git \
+    build-essential \
+    postgresql-server-dev-18 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Percona repository bootstrap package (generic, codename-agnostic)
@@ -22,6 +25,22 @@ RUN percona-release setup ppg-18
 RUN apt-get update && apt-get install -y \
     percona-pg-stat-monitor18 \
     postgresql-18-cron \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build and install pg_ivm 1.13 from source
+RUN git clone --branch v1.13 --depth 1 https://github.com/sraoss/pg_ivm.git /tmp/pg_ivm && \
+    cd /tmp/pg_ivm && \
+    make && \
+    make install && \
+    cd / && \
+    rm -rf /tmp/pg_ivm
+
+# Remove build dependencies to reduce image size
+RUN apt-get purge -y \
+    git \
+    build-essential \
+    postgresql-server-dev-18 \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the initialization script into the entrypoint init directory

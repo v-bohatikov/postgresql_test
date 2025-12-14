@@ -19,17 +19,24 @@ services:
       POSTGRES_USER: "admin1"
       POSTGRES_PASSWORD: "admin1"
       POSTGRES_DB: "db"
+      PGDATA: /var/lib/postgresql/18/docker
+      # Provide a password for the *default* postgres user check
+      POSTGRES_DEFAULT_PASSWORD: "postgres" 
     volumes:
-      - pg-primary-data:/var/lib/postgresql/data 
+      - pg-primary-data:/var/lib/postgresql/18/docker
       - ./pg-primary/config:/config/
-      - ./pg-primary/archive:/mnt/server/archive
+      - ./pg-primary/archive:/mnt/server/archivedir
     ports:
       - 5000:5432
     networks:
       - pg-network
-    # Force PostgreSQL instance to use our own configuration file
-    #command: "postgres -c config_file=/config/postgresql.conf"
-    command: ["tail", "-f", "/dev/null"] 
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin1 -d db"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    command: ["docker-entrypoint.sh", "postgres", "-c", "config_file=/config/postgresql.conf"]
 
   # Standby PostgeSQL instance
   pg-standby:
@@ -40,27 +47,56 @@ services:
       POSTGRES_USER: "admin2"
       POSTGRES_PASSWORD: "admin2"
       POSTGRES_DB: "db"
+      PGDATA: /var/lib/postgresql/18/docker
+      # Required for 'pg_basebackup' command to run without promting imput of a password
+      PGPASSWORD: "replicator_password"
+      # Provide a password for the *default* postgres user check
+      POSTGRES_DEFAULT_PASSWORD: "postgres" 
     volumes:
-      - pg-standby-data:/var/lib/postgresql/data
+      - pg-standby-data:/var/lib/postgresql/18/docker
       - ./pg-standby/config:/config/
-      - ./pg-standby/archive:/mnt/server/archive
+      - ./pg-standby/archive:/mnt/server/archivedir
     ports:
       - 5001:5432
     depends_on:
-      - pg-primary
+      pg-primary:
+        condition: service_healthy
     networks:
       - pg-network
-    command: >
-      bash -c "
-      # Wait for primary to initialize
-      sleep 5;
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin2 -d db"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    command: |
+      bash -c '
+      set -e
 
-      # Use the 'replicator' user for base backup/replication
-      pg_basebackup -h pg-primary -U replicator -D /var/lib/postgresql/data -P -R -S rep_slot_standby;
+      # Use a wait loop until the primary is truly ready for replication
+      while ! pg_isready -h pg-primary -U replicator -d postgres; do
+        echo "Waiting for primary DB..."
+        sleep 2
+      done
 
-      # Force PostgreSQL instance to use our own configuration file
-      exec postgres -c config_file=/config/postgresql.conf
-      "
+      # Intiate one-time backup to make the instance replication ready
+      if [ ! -s /var/lib/postgresql/18/docker ]; then
+        pg_basebackup \
+          -h pg-primary \
+          -U replicator \
+          -D /var/lib/postgresql/18/docker \
+          -P \
+          -R \
+          -S rep_slot_standby
+      fi
+
+      # Ensure that archivedir is exists
+      mkdir -p /mnt/server/archivedir
+
+      # Run entrypoint script and force PostgreSQL instance to use our own configuration file
+      exec docker-entrypoint.sh postgres -c config_file=/config/postgresql.conf
+      '
+    
 
   # pgAdmin for managment of PostgeSQL instances
   pgAdmin:
@@ -78,8 +114,10 @@ services:
       # Persistent storage for pgAdmin config/sessions
       - ./pgAdmin/data:/var/lib/pgadmin 
     depends_on:
-      - pg-primary
-      - pg-standby
+      pg-primary:
+        condition: service_healthy
+      pg-standby:
+        condition: service_healthy
     networks:
       - pg-network
   
@@ -95,6 +133,13 @@ services:
       - ./pmm/data:/srv
     networks:
       - pg-network
+    healthcheck:
+      # Check if the UI is responsive on port 8080 (internal container port)
+      test: ["CMD", "curl", "-f", "http://localhost:8080/graph/ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
 
   pmm-client:
     container_name: pmm-client
@@ -112,16 +157,16 @@ services:
       # The trigger that makes the client use these settings on startup
       PMM_AGENT_SETUP: 1
     depends_on:
-      - pmm-server
-      - pg-primary
-      - pg-standby
+      pmm-server:
+        condition: service_healthy
+      pg-primary:
+        condition: service_healthy
+      pg-standby:
+        condition: service_healthy
     networks:
       - pg-network
     command: >
       bash -c "
-      # Wait for PMM server to be available
-      sleep 10;
-      
       # The client node is automatically configured using PMM_AGENT_* environment variables and PMM_AGENT_SETUP=1
 
       # Register primary PostgeSQL instance
@@ -131,7 +176,8 @@ services:
         --host=pg-primary \
         --username=pmm \
         --password=pmm_password \
-        --service-name=pg-primary-service;
+        --service-name=pg-primary-service \
+        || echo "Primary service already registered"
 
       # Register standby PostgeSQL instance
       # NOTE: Username and paasword being taken from 'startup.sql' file which
@@ -140,9 +186,10 @@ services:
         --host=pg-standby \
         --username=pmm \
         --password=pmm_password \
-        --service-name=pg-standby-service;
+        --service-name=pg-standby-service \
+        || echo "Primary service already registered"
 
-      # Keep the container running in the foreground, specifically for Docker so it doesn't stop the client
+      # Keep the container running in the foreground, specifically for Docker so it whouldn't stop the client
       tail -f /dev/null
       "
 

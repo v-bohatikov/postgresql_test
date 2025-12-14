@@ -4,8 +4,8 @@ GRANT pg_monitor TO pmm;
 GRANT pg_read_all_stats TO pmm;
 
 -- Create a user with permission for streaming replication
-CREATE USER replicator WITH ENCRYPTED PASSWORD 'replicator_password';
-GRANT REPLICATION ON DATABASE postgres TO replicator; 
+CREATE ROLE replicator WITH REPLICATION LOGIN ENCRYPTED PASSWORD 'replicator_password';
+GRANT CONNECT ON DATABASE postgres TO replicator;
 
 -- Enable extensions
 CREATE EXTENSION IF NOT EXISTS pg_cron;
