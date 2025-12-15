@@ -1,0 +1,1 @@
+-- Configure a scheduled task that will create new partitions automatically
