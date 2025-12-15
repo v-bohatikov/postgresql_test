@@ -1,0 +1,198 @@
+networks:
+  pg-network:
+
+services:
+
+  # Custom PostgeSQL build
+  persona-pg-18-ex:
+    build:
+      context: ./persona-pg-18-ex
+      dockerfile: persona-pg-18-ex.Dockerfile
+    image: persona-pg-18-ex
+
+  # Primary PostgeSQL instance
+  pg-primary:
+    container_name: pg-primary
+    image: persona-pg-18-ex
+    restart: always
+    environment:
+      POSTGRES_USER: "admin1"
+      POSTGRES_PASSWORD: "admin1"
+      POSTGRES_DB: "db"
+      PGDATA: /var/lib/postgresql/18/docker
+      # Provide a password for the *default* postgres user check
+      POSTGRES_DEFAULT_PASSWORD: "postgres" 
+    volumes:
+      - pg-primary-data:/var/lib/postgresql/18/docker
+      - ./pg-primary/config:/config/
+      - ./pg-primary/archive:/mnt/server/archivedir
+    ports:
+      - 5000:5432
+    networks:
+      - pg-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin1 -d db"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    command: ["docker-entrypoint.sh", "postgres", "-c", "config_file=/config/postgresql.conf"]
+
+  # Standby PostgeSQL instance
+  pg-standby:
+    container_name: pg-standby
+    image: persona-pg-18-ex
+    restart: always
+    environment:
+      PGDATA: /var/lib/postgresql/18/docker
+      # Required for 'pg_basebackup' command to run without promting imput of a password
+      PGPASSWORD: "replicator_password"
+      # Provide a password for the *default* postgres user check
+      POSTGRES_DEFAULT_PASSWORD: "postgres" 
+    volumes:
+      - pg-standby-data:/var/lib/postgresql/18/docker
+      - ./pg-standby/config:/config/
+      - ./pg-standby/archive:/mnt/server/archivedir
+    ports:
+      - 5001:5432
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    networks:
+      - pg-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin1 -d db"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    command: |
+      bash -c '
+      set -e
+
+      # Use a wait loop until the primary is truly ready for replication
+      while ! pg_isready -h pg-primary -U replicator -d db; do
+        echo "Waiting for primary DB..."
+        sleep 2
+      done
+
+      # Intiate one-time backup to make the instance replication ready
+      if [ -z "$(ls -A /var/lib/postgresql/18/docker 2>/dev/null)" ]; then
+        pg_basebackup \
+          -h pg-primary \
+          -U replicator \
+          -D /var/lib/postgresql/18/docker \
+          -P \
+          -R \
+          -C \
+          -S rep_slot_standby
+      fi
+
+      # Ensure that archivedir is exists
+      mkdir -p /mnt/server/archivedir
+
+      # Run entrypoint script and force PostgreSQL instance to use our own configuration file
+      exec docker-entrypoint.sh postgres -c config_file=/config/postgresql.conf
+      '
+    
+
+  # pgAdmin for managment of PostgeSQL instances
+  pgAdmin:
+    container_name: pgAdmin
+    image: dpage/pgadmin4:9
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@test.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8181:80"
+    volumes:
+      # Map the config file with proconfigured instances
+      - ./pgAdmin/config/servers.json:/pgadmin4/servers.json
+      # Persistent storage for pgAdmin config/sessions
+      - ./pgAdmin/data:/var/lib/pgadmin 
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+      pg-standby:
+        condition: service_healthy
+    networks:
+      - pg-network
+  
+  # PMM configuration for PostgeSQL instances
+  pmm-server:
+    container_name: pmm-server
+    image: percona/pmm-server:3
+    restart: always
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - ./pmm/data:/srv
+    networks:
+      - pg-network
+    healthcheck:
+      # Checking whether '/v1/version' is served by the PMM API
+      # It only becomes available after the server is fully initialized
+      test: ["CMD", "curl", "-k", "https://pmm-server:8443/v1/version"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  pmm-client:
+    container_name: pmm-client
+    image: percona/pmm-client:3
+    restart: always
+    depends_on:
+      pmm-server:
+        condition: service_healthy
+      pg-primary:
+        condition: service_healthy
+      pg-standby:
+        condition: service_healthy
+    networks:
+      - pg-network
+    entrypoint:
+      - /bin/bash
+      - -c
+    command:
+      - |
+        set -e
+
+        # Replaces the automatic configuration from 'pmm-agent-entrypoint', that we have overwritten
+        CONFIG=/usr/local/percona/pmm/config/pmm-agent.yaml
+        pmm-agent setup \
+          --server-address=pmm-server:8443 \
+          --server-insecure-tls \
+          --server-username=admin \
+          --server-password=admin \
+          --config-file="$$CONFIG"
+        pmm-agent --config-file="$$CONFIG"
+
+        # Register primary PostgeSQL instance
+        # NOTE: Username and paasword being taken from 'startup.sql' file which
+        # is part of our own custom build for PostgreSQL
+        pmm-admin add postgresql \
+          --host=pg-primary \
+          --username=pmm \
+          --password=pmm_password \
+          --service-name=pg-primary-service \
+          || echo "Primary service already registered"
+
+        # Register standby PostgeSQL instance
+        # NOTE: Username and paasword being taken from 'startup.sql' file which
+        # is part of our own custom build for PostgreSQL
+        pmm-admin add postgresql \
+          --host=pg-standby \
+          --username=pmm \
+          --password=pmm_password \
+          --service-name=pg-standby-service \
+          || echo "Primary service already registered"
+
+        # Keep the container running in the foreground, specifically for Docker so it whouldn't stop the client
+        tail -f /dev/null
+
+volumes:
+  pg-primary-data:
+  pg-standby-data:
