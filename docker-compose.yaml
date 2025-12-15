@@ -167,7 +167,6 @@ services:
           --server-insecure-tls \
           --server-username=admin \
           --server-password=admin \
-          --node-name=pmm-client \
           --config-file="$$CONFIG"
         pmm-agent --config-file="$$CONFIG"
 
