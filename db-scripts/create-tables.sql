@@ -28,17 +28,3 @@ create index idx_operation_mv_support
 on operation (client_id, is_online_op)
 include (op_sum) -- Should make it available without heap access
 where op_state = true;
-
--- Create 4 default partitions for data generation
-create table operation_y2025m09 partition of operation
--- NOTE: Adjacent partitions can share a bound value, since range upper bounds are treated as exclusive bounds.
-for values from ('2025-09-01') to ('2026-10-01');
-
-create table operation_y2025m10 partition of operation
-for values from ('2025-10-01') to ('2026-11-01');
-
-create table operation_y2025m11 partition of operation
-for values from ('2025-11-01') to ('2026-12-01');
-
-create table operation_y2025m12 partition of operation
-for values from ('2025-12-01') to ('2026-01-01');

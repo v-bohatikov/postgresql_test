@@ -60,8 +60,9 @@ $$;
 
 -- Configure a scheduled task that will create new partitions automatically
 SELECT cron.schedule(
-    'create_next_month_partition',
-    '0 1 * * *',    -- Runs everyday at 01:00
+    'create_next_month_partition_task',
+    -- Runs everyday at 01:00
+    '0 1 * * *',
     $$
         call create_monthly_partitions(
             (current_date - interval '3 months')::date,
