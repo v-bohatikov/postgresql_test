@@ -1,11 +1,11 @@
 -- Create a support table with unique users for simplification of future data generation
-create table client(
+create table if not exists client(
     id              bigint          generated always as identity primary key,
     account_number  uuid            unique not null default uuidv7(),
 )
 
 -- Create a main table for operations
-create table operation (
+create table if not exists operation (
     id              bigint          generated always as identity primary key,
     op_uuid         uuid            unique not null default uuidv7(),
     op_date         date            not null,

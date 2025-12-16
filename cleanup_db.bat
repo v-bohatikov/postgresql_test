@@ -1,0 +1,1 @@
+docker exec -i pg-primary psql -U admin1 -d db -v ON_ERROR_STOP=1 < db-scripts\cleanup.sql

@@ -44,11 +44,12 @@ $$
     end;
 $$;
 
-SELECT cron.schedule(
+SELECT cron.schedule_in_database(
     'generate_new_operation_task',
     -- Runs every minute, further granulation done inside
     '* * * * *',
-    $$call generate_operation_every_5_seconds();$$
+    $$call generate_operation_every_5_seconds();$$,
+    current_database()
 );
 
 -- Create a scheduled task for updating a 'state' column every 3 seconds
@@ -116,9 +117,10 @@ $$
     end;
 $$;
 
-SELECT cron.schedule(
+SELECT cron.schedule_in_database(
     'change_operation_state_task',
     -- Runs every minute, further granulation done inside
     '* * * * *',
-    $$call change_operation_state_every_3_seconds();$$
+    $$call change_operation_state_every_3_seconds();$$,
+    current_database()
 );
