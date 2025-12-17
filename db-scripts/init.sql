@@ -1,9 +1,12 @@
--- Configure required elements
-\i 1-create-tables.sql
-\i 2-configure-continues-patitioning-support.sql
-\i 3-create-materialization-view.sql
-\i 4-configure-sheduled-data-mutations.sql
-\i 5-create-data-generation-procedures.sql
+-- Configure tables
+\ir config-scripts/1-create-tables.sql
+\ir config-scripts/2-configure-continues-patitioning-support.sql
+\ir config-scripts/3-create-data-generation-procedures.sql
 
--- Generate the data
-\i generate-data.sql
+-- Generate defaule data before further configuration
+\ir data-manipulation/generate-data.sql
+
+-- Configure MV and data mutation tasks
+\ir config-scripts/4-create-materialization-view.sql
+\ir config-scripts/5-configure-sheduled-data-mutations.sql
+

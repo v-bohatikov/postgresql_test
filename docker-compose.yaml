@@ -26,6 +26,8 @@ services:
       - pg-primary-data:/var/lib/postgresql/18/docker
       - ./pg-primary/config:/config/
       - ./pg-primary/archive:/mnt/server/archivedir
+      # Required to execute our custom scripts inside of this container
+      - ./db-scripts:/db-scripts
     ports:
       - 5000:5432
     networks:
