@@ -15,32 +15,25 @@ $$
             return;
         end if;
 
-        begin
-            for i in 1..12 loop
-                insert into operation (
-                    op_date,
-                    op_state,
-                    op_sum,
-                    op_details
-                )
-                select *
-                from generate_operation_row(current_date, null);
+        for i in 1..12 loop
+            insert into operation (
+                op_date,
+                op_state,
+                op_sum,
+                op_details
+            )
+            select *
+            from generate_operation_row(current_date, null::date, i);
+            commit;
 
-                -- Sleep only between iterations to prevent lock collisions
-                if i < 12 then
-                    perform pg_sleep(5);
-                end if;
-            end loop;
-        
-            -- Normal unlock
-            perform pg_advisory_unlock(424242);
-
-        exception
-            when others then
-                -- Ensure unlock on error
-                perform pg_advisory_unlock(424242);
-                raise;
-        end;
+            -- Sleep only between iterations to prevent lock collisions
+            if i < 12 then
+                perform pg_sleep(5);
+            end if;
+        end loop;
+    
+        -- Normal unlock
+        perform pg_advisory_unlock(424242);
     end;
 $$;
 
@@ -73,47 +66,40 @@ $$
             return;
         end if;
 
-        begin
-            for i in 1..20 loop            
-                -- Determine remainder from modulus operator on passed seconds
-                -- That will be used to determine whether we are going to update even or odd ids 
-                remainder := 
-                    case
-                        when extract(second from now())::int % 2 = 0 then 0
-                        else 1
-                    end;
-                
-                -- Processing all matching rows in batches to minimize WAL pressure 
-                loop
-                    update operation
-                    set op_state = true
-                    where ctid in (
-                        select ctid
-                        from operation
-                        where op_state = false and id % 2 = remainder
-                        limit 1000
-                    );
+        for i in 1..20 loop            
+            -- Determine remainder from modulus operator on passed seconds
+            -- That will be used to determine whether we are going to update even or odd ids 
+            remainder := 
+                case
+                    when extract(second from now())::int % 2 = 0 then 0
+                    else 1
+                end;
+            
+            -- Processing all matching rows in batches to minimize WAL pressure 
+            loop
+                update operation
+                set op_state = true
+                where ctid in (
+                    select ctid
+                    from operation
+                    where op_state = false and id % 2 = remainder
+                    limit 1000
+                );
+                commit;
 
-                    -- Exit inner loop when there no more matching rows
-                    get diagnostics rows_updated = row_count;
-                    exit when rows_updated = 0;
-                end loop;
-
-                -- Sleep only between iterations to prevent lock collisions
-                if i < 20 then
-                    perform pg_sleep(3);
-                end if;
+                -- Exit inner loop when there no more matching rows
+                get diagnostics rows_updated = row_count;
+                exit when rows_updated = 0;
             end loop;
 
-            -- Normal unlock
-            perform pg_advisory_unlock(434343);
+            -- Sleep only between iterations to prevent lock collisions
+            if i < 20 then
+                perform pg_sleep(3);
+            end if;
+        end loop;
 
-        exception
-            when others then
-                -- Ensure unlock on error
-                perform pg_advisory_unlock(434343);
-                raise;
-        end;
+        -- Normal unlock
+        perform pg_advisory_unlock(434343);
     end;
 $$;
 

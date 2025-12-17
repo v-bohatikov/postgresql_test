@@ -39,7 +39,6 @@ SELECT pgivm.create_immv(
         is_online_op,
         SUM(op_sum) AS total_sum
     FROM completed_operation_projection
-    WHERE op_state = true
     GROUP BY client_id, is_online_op
   $$
 );

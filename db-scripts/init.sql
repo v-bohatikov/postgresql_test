@@ -7,6 +7,6 @@
 \ir data-manipulation/generate-data.sql
 
 -- Configure MV and data mutation tasks
-\ir config-scripts/4-create-materialization-view.sql
+\ir config-scripts/4-create-materialization-view-support.sql
 \ir config-scripts/5-configure-sheduled-data-mutations.sql
 

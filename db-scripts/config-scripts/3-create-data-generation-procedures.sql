@@ -10,9 +10,11 @@ $$
 $$;
 
 -- Create a function for generation of row
-create or replace function generate_row(
+create or replace function generate_operation_row(
     start_date date,
-    end_date   date
+    end_date   date,
+    -- Used to forces per-row correlation and garanties execution of function per row
+    _seed      int
 )
 returns table (
     op_date    date,
@@ -34,6 +36,7 @@ $$
             new_date := start_date + floor(random() * (end_date - start_date + 1))::int;
         end if;
 
+        return query
         select
             new_date,
             -- op_state: always false
@@ -60,14 +63,15 @@ create or replace procedure generate_operations()
 language plpgsql as
 $$
     declare
-        start_date  date := (current_date - interval '3 months')::date;
-        end_date    date := current_date;
-        row_amount  int := 100000;
-        batch_size  int := 50000;
-        remaining   integer := row_amount;
+        start_date      date := (current_date - interval '3 months')::date;
+        end_date        date := current_date;
+        row_amount      int := 100000;
+        batch_size      int := 5000;
+        remaining       integer := row_amount;
+        current_batch   int;
     begin        
         -- Create partiotions required for this range
-        call create_monthly_partitions(
+        call create_monthly_partitions_for_range(
             start_date,
             end_date
         );
@@ -84,10 +88,15 @@ $$
                 op_sum,
                 op_details
             )
-            select *
-            from generate_series(1, current_batch)
+            select
+                r.op_date,
+                r.op_state,
+                r.op_sum,
+                r.op_details
+            from generate_series(1, current_batch) as gs(i)
             -- Used to execute this part once per left-hand row(generated one)
-            cross join lateral generate_row(start_date, end_date);
+            cross join lateral generate_operation_row(start_date, end_date, gs.i) as r;
+            commit; 
 
             remaining := remaining - current_batch;
         end loop;
