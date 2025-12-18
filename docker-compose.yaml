@@ -120,7 +120,7 @@ services:
       - "8181:80"
     volumes:
       # Persistent storage for pgAdmin config/sessions
-      - ./pgAdmin/data:/var/lib/pgadmin
+      - pgAdmin-data:/var/lib/pgadmin
     depends_on:
       pg-primary:
         condition: service_healthy
@@ -140,7 +140,7 @@ services:
       - "8080:8080"
       - "8443:8443"
     volumes:
-      - ./pmm/data:/srv
+      - pmm-data:/srv
     networks:
       - pg-network
     healthcheck:
@@ -224,3 +224,5 @@ services:
 volumes:
   pg-primary-data:
   pg-standby-data:
+  pmm-data:
+  pgAdmin-data:
