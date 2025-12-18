@@ -3,20 +3,22 @@
     "1": {
       "Name": "Primary PostgreSQL instance",
       "Group": "Servers",
-      "Port": 5000,
-      "Host": "pg_1",
+      "Port": 5432,
+      "Host": "pg-primary",
       "SSLMode": "prefer",
       "MaintenanceDB": "db",
-      "Username": "admin1"
+      "Username": "admin1",
+      "PassFile": ".pgpass"
     },
     "2": {
       "Name": "Standby PostgreSQL instance",
       "Group": "Servers",
-      "Port": 5001,
-      "Host": "pg_2",
+      "Port": 5432,
+      "Host": "pg-standby",
       "SSLMode": "prefer",
       "MaintenanceDB": "db",
-      "Username": "admin2"
+      "Username": "admin1",
+      "PassFile": ".pgpass"
     }
   }
 }

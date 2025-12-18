@@ -26,6 +26,8 @@ services:
       - pg-primary-data:/var/lib/postgresql/18/docker
       - ./pg-primary/config:/config/
       - ./pg-primary/archive:/mnt/server/archivedir
+      # Required to execute our custom scripts inside of this container
+      - ./db-scripts:/db-scripts
     ports:
       - 5000:5432
     networks:
@@ -97,20 +99,28 @@ services:
     
 
   # pgAdmin for managment of PostgeSQL instances
+  pgAdmin-custom:
+    build:
+      context: ./pgAdmin
+      dockerfile: pgadmin-custom.Dockerfile
+    image: pgadmin-custom
+
   pgAdmin:
     container_name: pgAdmin
-    image: dpage/pgadmin4:9
+    image: pgadmin-custom
     restart: always
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@test.com
       PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
+      PGPASS_FILE: /pgadmin4/.pgpass
     ports:
       - "8181:80"
     volumes:
-      # Map the config file with proconfigured instances
-      - ./pgAdmin/config/servers.json:/pgadmin4/servers.json
       # Persistent storage for pgAdmin config/sessions
-      - ./pgAdmin/data:/var/lib/pgadmin 
+      - pgAdmin-data:/var/lib/pgadmin
     depends_on:
       pg-primary:
         condition: service_healthy
@@ -124,11 +134,13 @@ services:
     container_name: pmm-server
     image: percona/pmm-server:3
     restart: always
+    environment:
+      PMM_QUERY_ANALYTICS_ENABLED: 'True'
     ports:
       - "8080:8080"
       - "8443:8443"
     volumes:
-      - ./pmm/data:/srv
+      - pmm-data:/srv
     networks:
       - pg-network
     healthcheck:
@@ -163,12 +175,24 @@ services:
         # Replaces the automatic configuration from 'pmm-agent-entrypoint', that we have overwritten
         CONFIG=/usr/local/percona/pmm/config/pmm-agent.yaml
         pmm-agent setup \
+          --force \
           --server-address=pmm-server:8443 \
           --server-insecure-tls \
           --server-username=admin \
           --server-password=admin \
           --config-file="$$CONFIG"
-        pmm-agent --config-file="$$CONFIG"
+        
+        # Start agent in background
+        pmm-agent --config-file="$$CONFIG" &
+        AGENT_PID=$!
+
+        # Wait until agent API become available
+        for i in {1..30}; do
+          if curl -sf http://127.0.0.1:7777/local/Status >/dev/null; then
+            break
+          fi
+          sleep 1
+        done
 
         # Register primary PostgeSQL instance
         # NOTE: Username and paasword being taken from 'startup.sql' file which
@@ -178,6 +202,8 @@ services:
           --username=pmm \
           --password=pmm_password \
           --service-name=pg-primary-service \
+          --database=db \
+          --query-source=pgstatmonitor \
           || echo "Primary service already registered"
 
         # Register standby PostgeSQL instance
@@ -188,11 +214,15 @@ services:
           --username=pmm \
           --password=pmm_password \
           --service-name=pg-standby-service \
-          || echo "Primary service already registered"
+          --database=db \
+          --query-source=pgstatmonitor \
+          || echo "Standby service already registered"
 
-        # Keep the container running in the foreground, specifically for Docker so it whouldn't stop the client
-        tail -f /dev/null
+        # Keep the agent process in foreground
+        wait $$AGENT_PID
 
 volumes:
   pg-primary-data:
   pg-standby-data:
+  pmm-data:
+  pgAdmin-data:

@@ -28,7 +28,7 @@ $$
 
         while month_start < month_end loop
             partition_name := format(
-                '%operation_y%sm%s',
+                'operation_y%sm%s',
                 to_char(month_start, 'YYYY'),
                 to_char(month_start, 'MM')
             );
@@ -44,7 +44,7 @@ $$
                 sql := format(
                     'create table %I partition of %I for values from (%L) to (%L);',
                     partition_name,
-                    operation,
+                    'operation',
                     month_start,
                     (month_start + interval '1 month')::date
                 );
@@ -64,7 +64,7 @@ SELECT cron.schedule_in_database(
     -- Runs everyday at 01:00
     '0 1 * * *',
     $$
-        call create_monthly_partitions(
+        call create_monthly_partitions_for_range(
             (current_date - interval '3 months')::date,
             current_date
         );
